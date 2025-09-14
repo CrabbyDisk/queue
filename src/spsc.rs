@@ -28,15 +28,17 @@ pub struct Sender<T> {
 
 impl<T> Sender<T> {
     pub fn try_send(&mut self, el: T) -> Option<T> {
-        let (buffer, meta) =
-            unsafe { (&mut self.ptr.as_mut().buffer, &mut self.ptr.as_mut().meta) };
-        let head = meta.head.load(Ordering::Relaxed);
-        let tail = meta.tail.load(Ordering::Acquire);
-        if head.wrapping_sub(tail) == buffer.len() {
+        let shared = &mut unsafe { self.ptr.as_mut() };
+        let head = shared.meta.head.load(Ordering::Relaxed);
+        let tail = shared.meta.tail.load(Ordering::Acquire);
+        if head.wrapping_sub(tail) == shared.buffer.len() {
             Some(el)
         } else {
-            buffer[head % buffer.len()].write(el);
-            meta.head.store(head.wrapping_add(1), Ordering::Release);
+            shared.buffer[head % shared.buffer.len()].write(el);
+            shared
+                .meta
+                .head
+                .store(head.wrapping_add(1), Ordering::Release);
             None
         }
     }
@@ -46,9 +48,7 @@ impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let shared = unsafe { self.ptr.as_mut() };
         if shared.meta.rx_dropped.load(Ordering::Acquire) {
-            unsafe {
-                drop(Box::from_non_null(self.ptr));
-            }
+            drop(unsafe { Box::from_non_null(self.ptr) });
         } else {
             shared.meta.tx_dropped.store(true, Ordering::Release);
         }
@@ -62,22 +62,24 @@ pub struct Receiver<T> {
 
 impl<T> Receiver<T> {
     pub fn try_recv(&mut self) -> Option<T> {
-        let (buffer, meta) =
-            unsafe { (&mut self.ptr.as_mut().buffer, &mut self.ptr.as_mut().meta) };
-        let tail = meta.tail.load(Ordering::Relaxed);
-        let head = meta.head.load(Ordering::Acquire);
+        let shared = &mut unsafe { self.ptr.as_mut() };
+        let tail = shared.meta.tail.load(Ordering::Relaxed);
+        let head = shared.meta.head.load(Ordering::Acquire);
         // If tail == head, then the queue is empty.
         if tail == head {
             None
         } else {
-            let result = unsafe {
-                Some(
-                    std::mem::replace(&mut buffer[tail % buffer.len()], MaybeUninit::zeroed())
-                        .assume_init(),
+            shared
+                .meta
+                .tail
+                .store(tail.wrapping_add(1), Ordering::Release);
+            Some(unsafe {
+                std::mem::replace(
+                    &mut shared.buffer[tail % shared.buffer.len()],
+                    MaybeUninit::zeroed(),
                 )
-            };
-            meta.tail.store(tail.wrapping_add(1), Ordering::Release);
-            result
+                .assume_init()
+            })
         }
     }
 }
@@ -86,9 +88,7 @@ impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         let shared = unsafe { self.ptr.as_mut() };
         if shared.meta.tx_dropped.load(Ordering::Acquire) {
-            unsafe {
-                drop(Box::from_non_null(self.ptr));
-            }
+            drop(unsafe { Box::from_non_null(self.ptr) });
         } else {
             shared.meta.rx_dropped.store(true, Ordering::Release);
         }
@@ -99,9 +99,11 @@ pub fn new<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     let layout = Layout::new::<Meta>()
         .extend(Layout::array::<T>(cap).unwrap())
         .unwrap();
-    let ptr = unsafe { NonNull::new(alloc(layout.0.pad_to_align())).unwrap() };
+    let ptr = NonNull::new(unsafe { alloc(layout.0.pad_to_align()) })
+        .unwrap()
+        .cast();
     unsafe {
-        ptr.cast::<Meta>().write(Meta {
+        ptr.write(Meta {
             tx_dropped: false.into(),
             rx_dropped: false.into(),
             head: 0.into(),
@@ -118,10 +120,10 @@ mod test {
 
     #[test]
     fn create() {
-        let mut thing = dbg!(new::<u32>(10));
-        thing.0.try_send(10);
-        thing.0.try_send(20);
-        assert_eq!(thing.1.try_recv(), Some(10));
-        assert_eq!(thing.1.try_recv(), Some(20));
+        let (mut tx, mut rx) = new::<u32>(10);
+        tx.try_send(10);
+        tx.try_send(20);
+        assert_eq!(rx.try_recv(), Some(10));
+        assert_eq!(rx.try_recv(), Some(20));
     }
 }
