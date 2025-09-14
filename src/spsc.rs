@@ -26,6 +26,8 @@ pub struct Sender<T> {
     ptr: NonNull<Shared<T>>,
 }
 
+unsafe impl<T> Send for Sender<T> {}
+
 impl<T> Sender<T> {
     pub fn try_send(&mut self, el: T) -> Option<T> {
         let shared = &mut unsafe { self.ptr.as_mut() };
@@ -76,13 +78,15 @@ impl<T> Receiver<T> {
             Some(unsafe {
                 std::mem::replace(
                     &mut shared.buffer[tail % shared.buffer.len()],
-                    MaybeUninit::zeroed(),
+                    MaybeUninit::uninit(),
                 )
                 .assume_init()
             })
         }
     }
 }
+
+unsafe impl<T> Send for Receiver<T> {}
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
