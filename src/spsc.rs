@@ -42,6 +42,19 @@ impl<T> Sender<T> {
     }
 }
 
+impl<T> Drop for Sender<T> {
+    fn drop(&mut self) {
+        let shared = unsafe { self.ptr.as_mut() };
+        if shared.meta.rx_dropped.load(Ordering::Acquire) {
+            unsafe {
+                drop(Box::from_non_null(self.ptr));
+            }
+        } else {
+            shared.meta.tx_dropped.store(true, Ordering::Release);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Receiver<T> {
     ptr: NonNull<Shared<T>>,
@@ -65,6 +78,19 @@ impl<T> Receiver<T> {
             };
             meta.tail.store(tail.wrapping_add(1), Ordering::Release);
             result
+        }
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        let shared = unsafe { self.ptr.as_mut() };
+        if shared.meta.tx_dropped.load(Ordering::Acquire) {
+            unsafe {
+                drop(Box::from_non_null(self.ptr));
+            }
+        } else {
+            shared.meta.rx_dropped.store(true, Ordering::Release);
         }
     }
 }
