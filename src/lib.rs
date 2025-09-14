@@ -1,3 +1,3 @@
 #![feature(ptr_metadata)]
 
-mod spsc;
+pub mod spsc;

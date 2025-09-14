@@ -27,7 +27,7 @@ pub struct Sender<T> {
 }
 
 impl<T> Sender<T> {
-    fn try_send(&mut self, el: T) -> Option<T> {
+    pub fn try_send(&mut self, el: T) -> Option<T> {
         let (buffer, meta) =
             unsafe { (&mut self.ptr.as_mut().buffer, &mut self.ptr.as_mut().meta) };
         let head = meta.head.load(Ordering::Relaxed);
@@ -48,7 +48,7 @@ pub struct Receiver<T> {
 }
 
 impl<T> Receiver<T> {
-    fn try_recv(&mut self) -> Option<T> {
+    pub fn try_recv(&mut self) -> Option<T> {
         let (buffer, meta) =
             unsafe { (&mut self.ptr.as_mut().buffer, &mut self.ptr.as_mut().meta) };
         let tail = meta.tail.load(Ordering::Relaxed);
@@ -69,7 +69,7 @@ impl<T> Receiver<T> {
     }
 }
 
-fn new<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
+pub fn new<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     let layout = Layout::new::<Meta>()
         .extend(Layout::array::<T>(cap).unwrap())
         .unwrap();
